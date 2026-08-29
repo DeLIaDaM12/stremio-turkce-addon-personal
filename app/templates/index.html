@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="tr" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stremio Türkçe Dublaj & Sinema Eklentisi</title>
+    <meta name="description" content="Stremio için Türkçe Dublaj ve Altyazılı yerli kaynakları (Direkt Akış & Torrent) tek çatı altında toplayan eklenti.">
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- QR Code Generator -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Outfit', 'sans-serif'],
+                    },
+                    colors: {
+                        tr: {
+                            red: '#E30A17',
+                            dark: '#0f172a',
+                            card: 'rgba(30, 41, 59, 0.7)',
+                            border: 'rgba(255, 255, 255, 0.1)',
+                            accent: '#38bdf8'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            background: radial-gradient(circle at top right, #1e1b4b, #0f172a 60%, #020617);
+            min-height: 100vh;
+        }
+        .glass-panel {
+            background: rgba(15, 23, 42, 0.75);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        .glow-button {
+            box-shadow: 0 0 25px -5px rgba(227, 10, 23, 0.5);
+            transition: all 0.3s ease;
+        }
+        .glow-button:hover {
+            box-shadow: 0 0 35px 2px rgba(227, 10, 23, 0.8);
+            transform: translateY(-2px);
+        }
+        .custom-toggle:checked ~ .dot {
+            transform: translateX(100%);
+            background-color: #38bdf8;
+        }
+        .custom-toggle:checked ~ .bg-switch {
+            background-color: rgba(56, 189, 248, 0.3);
+        }
+    </style>
+</head>
+<body class="text-slate-100 font-sans antialiased py-8 px-4 sm:px-6 lg:px-8">
+    <div class="max-w-4xl mx-auto space-y-8">
+        
+        <!-- Header -->
+        <header class="text-center space-y-4">
+            <div class="inline-flex items-center gap-3 px-4 py-2 rounded-full glass-panel border border-slate-700/50 shadow-lg">
+                <span class="text-2xl">🇹🇷</span>
+                <span class="text-sm font-semibold tracking-wide text-red-400 uppercase">Stremio TV & PC Uyumlu</span>
+                <span class="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+            </div>
+            <h1 class="text-4xl sm:text-5xl font-extrabold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-red-500 via-rose-400 to-amber-300">
+                Stremio Türkçe Dublaj & Sinema
+            </h1>
+            <p class="text-slate-300 max-w-2xl mx-auto text-base sm:text-lg">
+                Torrentio'da bulunmayan <strong>Türkçe Dublajlı</strong> filmleri ve dizileri yerli kaynaklardan (Direkt Hızlı Akış & Torrent) otomatik çeker.
+            </p>
+        </header>
+
+        <!-- Main Configuration Card -->
+        <div class="glass-panel rounded-3xl p-6 sm:p-8 shadow-2xl space-y-8">
+            
+            <!-- Quick Install Actions -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <a id="btnInstall" href="{{ stremio_install_url }}" class="glow-button flex items-center justify-center gap-3 bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white font-bold py-4 px-6 rounded-2xl text-lg text-center cursor-pointer">
+                    <svg class="w-7 h-7" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/>
+                    </svg>
+                    Stremio'ya Yükle (1-Tık)
+                </a>
+
+                <button id="btnCopyManifest" onclick="copyManifestLink()" class="flex items-center justify-center gap-3 bg-slate-800/80 hover:bg-slate-700 text-slate-200 font-semibold py-4 px-6 rounded-2xl border border-slate-600/50 transition">
+                    <svg class="w-6 h-6 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"/>
+                    </svg>
+                    <span id="copyText">Manifest Linkini Kopyala</span>
+                </button>
+            </div>
+
+            <!-- TV & Mobile QR Code Dropdown -->
+            <div class="border border-slate-700/60 rounded-2xl p-5 bg-slate-900/50 flex flex-col sm:flex-row items-center justify-between gap-6">
+                <div class="space-y-1 text-center sm:text-left">
+                    <div class="flex items-center justify-center sm:justify-start gap-2">
+                        <span class="text-xl">📺</span>
+                        <h2 class="font-bold text-lg text-slate-200">TV ve Telefonda Nasıl Senkron Çalışır?</h2>
+                    </div>
+                    <p class="text-sm text-slate-400 max-w-md">
+                        Stremio hesabınıza eklentiyi bir kez eklediğinizde, <strong>aynı hesaba bağlı Android TV, Google TV, Samsung TV, LG TV ve Mobil</strong> cihazlarınıza otomatik olarak senkronize olur.
+                    </p>
+                </div>
+                <div class="flex flex-col items-center bg-white p-2.5 rounded-xl shadow-md">
+                    <div id="qrcode"></div>
+                    <span class="text-[10px] text-slate-700 font-semibold mt-1">Telefondan Tara</span>
+                </div>
+            </div>
+
+            <!-- Configuration Options -->
+            <div class="space-y-6">
+                <h3 class="text-xl font-bold text-slate-100 flex items-center gap-2 border-b border-slate-700/80 pb-3">
+                    <span>⚙️</span> Kaynak ve Filtre Tercihleri
+                </h3>
+
+                <!-- Toggles Grid -->
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    
+                    <!-- Direct Video Streams -->
+                    <label class="flex items-center justify-between p-4 rounded-2xl bg-slate-800/40 border border-slate-700/40 cursor-pointer hover:bg-slate-800/60 transition">
+                        <div>
+                            <div class="font-semibold text-slate-200">⚡ Direkt Web Video Akışları</div>
+                            <div class="text-xs text-slate-400">Hızlı açılan HLS / MP4 sunucuları (VidMoly vb.)</div>
+                        </div>
+                        <input type="checkbox" id="chkDirect" checked onchange="updateManifestLink()" class="w-5 h-5 accent-red-500 rounded">
+                    </label>
+
+                    <!-- Torrents -->
+                    <label class="flex items-center justify-between p-4 rounded-2xl bg-slate-800/40 border border-slate-700/40 cursor-pointer hover:bg-slate-800/60 transition">
+                        <div>
+                            <div class="font-semibold text-slate-200">🧲 Türkçe & Dual Torrentler</div>
+                            <div class="text-xs text-slate-400">P2P ve Debrid uyumlu torrent linkleri</div>
+                        </div>
+                        <input type="checkbox" id="chkTorrents" checked onchange="updateManifestLink()" class="w-5 h-5 accent-red-500 rounded">
+                    </label>
+
+                    <!-- Prefer Dubbed -->
+                    <label class="flex items-center justify-between p-4 rounded-2xl bg-slate-800/40 border border-slate-700/40 cursor-pointer hover:bg-slate-800/60 transition">
+                        <div>
+                            <div class="font-semibold text-slate-200">🔊 Türkçe Dublaj Önceliği</div>
+                            <div class="text-xs text-slate-400">Dublajlı yayınları en üste sıralar</div>
+                        </div>
+                        <input type="checkbox" id="chkDubbed" checked onchange="updateManifestLink()" class="w-5 h-5 accent-red-500 rounded">
+                    </label>
+
+                    <!-- Turkish Subtitles -->
+                    <label class="flex items-center justify-between p-4 rounded-2xl bg-slate-800/40 border border-slate-700/40 cursor-pointer hover:bg-slate-800/60 transition">
+                        <div>
+                            <div class="font-semibold text-slate-200">💬 Türkçe Altyazılı Yayınlar</div>
+                            <div class="text-xs text-slate-400">Dublaj olmayan içeriklerde altyazı desteği</div>
+                        </div>
+                        <input type="checkbox" id="chkSubbed" checked onchange="updateManifestLink()" class="w-5 h-5 accent-red-500 rounded">
+                    </label>
+                </div>
+
+                <!-- Enabled Providers List -->
+                <div class="space-y-3 pt-2">
+                    <label class="font-semibold text-slate-300 block text-sm">Aktif Türkçe Sağlayıcılar:</label>
+                    <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                        <label class="flex items-center gap-2 p-3 bg-slate-800/30 rounded-xl border border-slate-700/30 text-sm cursor-pointer hover:border-slate-500">
+                            <input type="checkbox" class="prov-chk accent-red-500" value="hdfilmcehennemi" checked onchange="updateManifestLink()">
+                            <span>HDFilmCehennemi</span>
+                        </label>
+                        <label class="flex items-center gap-2 p-3 bg-slate-800/30 rounded-xl border border-slate-700/30 text-sm cursor-pointer hover:border-slate-500">
+                            <input type="checkbox" class="prov-chk accent-red-500" value="dizipal" checked onchange="updateManifestLink()">
+                            <span>Dizipal</span>
+                        </label>
+                        <label class="flex items-center gap-2 p-3 bg-slate-800/30 rounded-xl border border-slate-700/30 text-sm cursor-pointer hover:border-slate-500">
+                            <input type="checkbox" class="prov-chk accent-red-500" value="fullhdfilmizlesene" checked onchange="updateManifestLink()">
+                            <span>FullHDFilmizlesene</span>
+                        </label>
+                        <label class="flex items-center gap-2 p-3 bg-slate-800/30 rounded-xl border border-slate-700/30 text-sm cursor-pointer hover:border-slate-500">
+                            <input type="checkbox" class="prov-chk accent-red-500" value="diziwatch" checked onchange="updateManifestLink()">
+                            <span>DiziWatch</span>
+                        </label>
+                        <label class="flex items-center gap-2 p-3 bg-slate-800/30 rounded-xl border border-slate-700/30 text-sm cursor-pointer hover:border-slate-500">
+                            <input type="checkbox" class="prov-chk accent-red-500" value="turktorrent" checked onchange="updateManifestLink()">
+                            <span>TurkTorrent / Dual</span>
+                        </label>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- Live Stream Search Tester -->
+            <div class="border-t border-slate-700/80 pt-6 space-y-4">
+                <h3 class="text-lg font-bold text-slate-200 flex items-center gap-2">
+                    <span>🔍</span> Canlı Dublaj Arama Testi (IMDb ID)
+                </h3>
+                <div class="flex gap-2">
+                    <input type="text" id="testImdbId" value="tt0816692" placeholder="Örn: tt0816692 (Interstellar)" class="flex-1 bg-slate-900/80 border border-slate-700 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-red-500 text-slate-100">
+                    <button onclick="testStreams()" id="btnTest" class="bg-red-600 hover:bg-red-500 text-white font-semibold px-6 py-3 rounded-xl text-sm transition">
+                        Yayınları Ara
+                    </button>
+                </div>
+                <div id="testResults" class="hidden space-y-2 max-h-60 overflow-y-auto pr-2"></div>
+            </div>
+
+        </div>
+
+        <!-- Footer -->
+        <footer class="text-center text-xs text-slate-500 space-y-1">
+            <p>Stremio Türkçe Dublaj & Altyazı Addon v1.0.0 | TV & PC Senkronize</p>
+            <p>Bu eklenti açık web kaynaklarını Stremio protokolü için indeksler.</p>
+        </footer>
+
+    </div>
+
+    <!-- Script Logic -->
+    <script>
+        const baseUrl = "{{ base_url }}";
+        let currentManifestUrl = "{{ manifest_url }}";
+
+        function buildConfigString() {
+            const direct = document.getElementById('chkDirect').checked;
+            const torrents = document.getElementById('chkTorrents').checked;
+            const preferDubbed = document.getElementById('chkDubbed').checked;
+            const subbed = document.getElementById('chkSubbed').checked;
+            
+            const providers = [];
+            document.querySelectorAll('.prov-chk:checked').forEach(cb => providers.push(cb.value));
+
+            const configObj = {
+                enable_direct: direct,
+                enable_torrents: torrents,
+                prefer_dubbed: preferDubbed,
+                enable_subbed: subbed,
+                enabled_providers: providers
+            };
+
+            const jsonStr = JSON.stringify(configObj);
+            return btoa(unescape(encodeURIComponent(jsonStr)));
+        }
+
+        function updateManifestLink() {
+            const configStr = buildConfigString();
+            currentManifestUrl = `${baseUrl}/${configStr}/manifest.json`;
+            const stremioUrl = `stremio://${window.location.host}/${configStr}/manifest.json`;
+            
+            document.getElementById('btnInstall').href = stremioUrl;
+            
+            // Re-render QR code
+            document.getElementById("qrcode").innerHTML = "";
+            new QRCode(document.getElementById("qrcode"), {
+                text: stremioUrl,
+                width: 100,
+                height: 100,
+                colorDark : "#0f172a",
+                colorLight : "#ffffff",
+                correctLevel : QRCode.CorrectLevel.M
+            });
+        }
+
+        function copyManifestLink() {
+            navigator.clipboard.writeText(currentManifestUrl).then(() => {
+                const textSpan = document.getElementById('copyText');
+                textSpan.innerText = 'Kopyalandı! ✔️';
+                setTimeout(() => {
+                    textSpan.innerText = 'Manifest Linkini Kopyala';
+                }, 2500);
+            });
+        }
+
+        async function testStreams() {
+            const imdbId = document.getElementById('testImdbId').value.trim();
+            if (!imdbId) return;
+
+            const btn = document.getElementById('btnTest');
+            const resDiv = document.getElementById('testResults');
+            btn.disabled = true;
+            btn.innerText = 'Aranıyor...';
+            resDiv.classList.remove('hidden');
+            resDiv.innerHTML = '<div class="text-sm text-slate-400 py-2">Türkçe kaynaklar taranıyor, lütfen bekleyin...</div>';
+
+            try {
+                const configStr = buildConfigString();
+                const resp = await fetch(`/${configStr}/stream/movie/${imdbId}.json`);
+                const data = await resp.json();
+                
+                if (!data.streams || data.streams.length === 0) {
+                    resDiv.innerHTML = '<div class="text-sm text-amber-400 py-2">Bu içerik için şu an uygun Türkçe yayın bulunamadı.</div>';
+                } else {
+                    let html = '';
+                    data.streams.forEach(s => {
+                        html += `
+                            <div class="p-3 bg-slate-800/70 border border-slate-700/60 rounded-xl text-left flex justify-between items-center gap-3">
+                                <div>
+                                    <div class="font-semibold text-sm text-red-400">${s.name}</div>
+                                    <div class="text-xs text-slate-300 whitespace-pre-line">${s.title}</div>
+                                </div>
+                                <span class="px-2 py-1 text-[11px] rounded bg-emerald-900/60 text-emerald-300 font-mono">
+                                    ${s.infoHash ? 'TORRENT' : 'DIREKT'}
+                                </span>
+                            </div>
+                        `;
+                    });
+                    resDiv.innerHTML = html;
+                }
+            } catch (err) {
+                resDiv.innerHTML = `<div class="text-sm text-rose-400 py-2">Hata: ${err.message}</div>`;
+            } finally {
+                btn.disabled = false;
+                btn.innerText = 'Yayınları Ara';
+            }
+        }
+
+        // Init QR code on load
+        window.addEventListener('DOMContentLoaded', () => {
+            updateManifestLink();
+        });
+    </script>
+</body>
+</html>
