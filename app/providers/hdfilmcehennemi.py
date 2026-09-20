@@ -42,6 +42,28 @@ class HdFilmCehennemiProvider(BaseProvider):
         return urllib.parse.urljoin(base_url.rstrip("/") + "/", value)
 
     @staticmethod
+    def _slug(value: str) -> str:
+        value = value.casefold().replace("&", " and ")
+        value = re.sub(r"[^a-z0-9]+", "-", value)
+        return value.strip("-")
+
+    def _direct_title_urls(self, meta: MediaMeta, base_url: str) -> List[str]:
+        values = [meta.original_title, meta.turkish_title]
+        urls: List[str] = []
+        seen: Set[str] = set()
+        for value in values:
+            if not value:
+                continue
+            slug = self._slug(value)
+            if not slug:
+                continue
+            url = f"{base_url.rstrip('/')}/{slug}/"
+            if url not in seen:
+                seen.add(url)
+                urls.append(url)
+        return urls
+
+    @staticmethod
     def _title_matches(text: str, meta: MediaMeta) -> bool:
         if not text:
             return True
@@ -55,13 +77,15 @@ class HdFilmCehennemiProvider(BaseProvider):
 
     def _search_candidates(self, html: str, meta: MediaMeta, base_url: str) -> List[str]:
         soup = BeautifulSoup(html, "html.parser")
-        candidates: List[str] = []
-        seen: Set[str] = set()
-        for node in soup.select(
+        selectors = (
             ".poster.poster-pop, .card-body a, .poster-media, article a, "
             ".film-list a, .film-item a, a.film-link, a[href*='/film/'], "
             "a[href*='/dizi/'], a[href*='/series/']"
-        ):
+        )
+        candidates: List[str] = []
+        seen: Set[str] = set()
+
+        for node in soup.select(selectors):
             link = node if node.name == "a" else node.find("a")
             if not link:
                 continue
@@ -90,24 +114,26 @@ class HdFilmCehennemiProvider(BaseProvider):
 
     def _collect_players(self, html: str, page_url: str) -> List[Tuple[str, str]]:
         soup = BeautifulSoup(html, "html.parser")
-        players: List[Tuple[str, str]] = []
-        seen: Set[str] = set()
-        for node in soup.select(
+        selectors = (
             "nav.nav-tab a, .nav-tabs a, button[data-bs-target], a[data-frame], "
             "a[data-src], a[data-url], a[href*='/player/'], iframe, video source, source"
-        ):
-            raw = (
+        )
+        players: List[Tuple[str, str]] = []
+        seen: Set[str] = set()
+
+        for node in soup.select(selectors):
+            raw_url = (
                 node.get("data-frame") or node.get("data-src") or node.get("data-url")
                 or node.get("src") or node.get("href")
             )
-            url = self._normalize_url(page_url, raw or "")
+            url = self._normalize_url(page_url, raw_url or "")
             if not url or url in seen:
                 continue
             seen.add(url)
             players.append((url, self._audio_type(node.get_text(" ", strip=True), url)))
 
-        for raw in re.findall(r"(?:https?:)?//[^\"'<>\s\\]+", html):
-            url = self._normalize_url(page_url, raw)
+        for raw_url in re.findall(r"(?:https?:)?//[^\"'<>\s\\]+", html):
+            url = self._normalize_url(page_url, raw_url)
             if not url or url in seen:
                 continue
             lower = url.casefold()
@@ -145,14 +171,32 @@ class HdFilmCehennemiProvider(BaseProvider):
         ) as client:
             target_url = ""
             for base_url in self.ACTIVE_MIRRORS:
+                # Prefer the site's canonical title slug. The old /search/{query}
+                # route is not a reliable endpoint on this site.
+                direct_urls = self._direct_title_urls(meta, base_url)
+                for candidate in direct_urls:
+                    try:
+                        page = await client.get(candidate)
+                        players = self._collect_players(page.text, candidate) if page.status_code == 200 else []
+                        print(f"[{self.name}] direct {self._diagnostic(page)} players={len(players)}")
+                        if players:
+                            target_url = candidate
+                            break
+                    except httpx.HTTPError as exc:
+                        print(f"[{self.name}] direct error url={candidate}: {exc}")
+                if target_url:
+                    break
+
+                # Keep search only as a fallback, using the site's actual route.
                 for query in meta.search_queries:
                     try:
-                        response = await client.get(f"{base_url}/search/{urllib.parse.quote(query)}")
-                        print(f"[{self.name}] search {self._diagnostic(response)}")
+                        search_url = f"{base_url}/?s={urllib.parse.quote(query)}"
+                        response = await client.get(search_url)
+                        print(f"[{self.name}] fallback search {self._diagnostic(response)} query={query!r}")
                         if response.status_code != 200:
                             continue
                         candidates = self._search_candidates(response.text, meta, base_url)
-                        print(f"[{self.name}] candidates={len(candidates)} query={query!r}")
+                        print(f"[{self.name}] fallback candidates={len(candidates)}")
                         for candidate in candidates[:10]:
                             page = await client.get(candidate)
                             players = self._collect_players(page.text, candidate) if page.status_code == 200 else []
@@ -163,7 +207,7 @@ class HdFilmCehennemiProvider(BaseProvider):
                         if target_url:
                             break
                     except httpx.HTTPError as exc:
-                        print(f"[{self.name}] search error query={query!r} mirror={base_url}: {exc}")
+                        print(f"[{self.name}] fallback search error query={query!r}: {exc}")
                 if target_url:
                     break
 
@@ -172,13 +216,14 @@ class HdFilmCehennemiProvider(BaseProvider):
                 return streams
 
             try:
-                page = await client.get(target_url)
-                if page.status_code != 200:
-                    print(f"[{self.name}] target rejected {self._diagnostic(page)}")
+                response = await client.get(target_url)
+                if response.status_code != 200:
+                    print(f"[{self.name}] target rejected {self._diagnostic(response)}")
                     return streams
-                players = self._collect_players(page.text, target_url)
-                print(f"[{self.name}] target players={len(players)} url={target_url}")
+
                 limit = max(0, config.max_streams_per_provider)
+                players = self._collect_players(response.text, target_url)
+                print(f"[{self.name}] target players={len(players)} url={target_url}")
                 for player_url, audio_type in players[:limit or None]:
                     try:
                         extracted = await self._extract_player(player_url, target_url)
