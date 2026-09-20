@@ -10,6 +10,7 @@ from app.providers.fullhdfilmizlesene import FullHdFilmizleseneProvider
 from app.providers.hdfilmcehennemi import HdFilmCehennemiProvider
 from app.providers.turktorrent import TurkTorrentProvider
 
+
 ALL_PROVIDERS = {
     "hdfilmcehennemi": HdFilmCehennemiProvider(),
     "dizipal": DizipalProvider(),
@@ -23,13 +24,18 @@ PROVIDER_TIMEOUT = 20.0
 
 async def _fetch_provider(name: str, provider, meta: MediaMeta, config: UserConfig) -> List[Stream]:
     try:
-        streams = await asyncio.wait_for(provider.get_streams(meta, config), timeout=PROVIDER_TIMEOUT)
+        streams = await asyncio.wait_for(
+            provider.get_streams(meta, config), timeout=PROVIDER_TIMEOUT
+        )
+        if not isinstance(streams, list):
+            print(f"[ProviderAggregator] {name}: invalid result type {type(streams).__name__}")
+            return []
         print(f"[ProviderAggregator] {name}: {len(streams)} stream(s)")
-        return streams if isinstance(streams, list) else []
+        return streams
     except asyncio.TimeoutError:
-        print(f"[ProviderAggregator] {name} timed out")
+        print(f"[ProviderAggregator] {name}: timeout after {PROVIDER_TIMEOUT:.0f}s")
     except Exception as exc:
-        print(f"[ProviderAggregator] {name} failed: {exc}")
+        print(f"[ProviderAggregator] {name}: failed: {type(exc).__name__}: {exc}")
     return []
 
 
@@ -55,35 +61,42 @@ async def fetch_all_streams(meta: MediaMeta, config: UserConfig) -> List[Stream]
     )
     cached = CacheService.get(streams_cache, cache_key)
     if cached:
+        print(f"[ProviderAggregator] cache hit: {len(cached)} stream(s)")
         return cached
 
     tasks = []
+    enabled = set(config.enabled_providers)
+    print(
+        f"[ProviderAggregator] request title={meta.original_title!r} "
+        f"type={meta.media_type} queries={meta.search_queries!r} enabled={sorted(enabled)}"
+    )
+
     for name, provider in ALL_PROVIDERS.items():
-        if name not in config.enabled_providers:
+        if name not in enabled:
+            print(f"[ProviderAggregator] {name}: disabled")
             continue
         if provider.is_torrent and not config.enable_torrents:
+            print(f"[ProviderAggregator] {name}: torrents disabled")
             continue
         if not provider.is_torrent and not config.enable_direct:
+            print(f"[ProviderAggregator] {name}: direct sources disabled")
             continue
         tasks.append(_fetch_provider(name, provider, meta, config))
 
     results = await asyncio.gather(*tasks)
     all_streams: List[Stream] = []
-    seen_urls = set()
-    seen_hashes = set()
+    seen_keys = set()
 
     for result in results:
         for stream in result:
-            key = getattr(stream, "infoHash", None) or getattr(stream, "url", None)
-            if not key or key in seen_urls or key in seen_hashes:
+            key = stream.infoHash or stream.url
+            if not key or key in seen_keys:
                 continue
-            if getattr(stream, "infoHash", None):
-                seen_hashes.add(key)
-            else:
-                seen_urls.add(key)
+            seen_keys.add(key)
             all_streams.append(stream)
 
     all_streams.sort(key=_stream_score, reverse=True)
+    print(f"[ProviderAggregator] total unique streams: {len(all_streams)}")
     if all_streams:
         CacheService.set(streams_cache, cache_key, all_streams)
     return all_streams
