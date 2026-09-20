@@ -13,7 +13,7 @@ from app.extractors.generic_hls import GenericHlsExtractor
 class HdFilmCehennemiProvider(BaseProvider):
     name = "HDFilmCehennemi"
     is_torrent = False
-    BASE_URL = "https://www.hdfilmcehennemi.ws"  # Active mirror
+    BASE_URL = "https://www.hdfilmcehennemi.nl"  # Active mirror
 
     def __init__(self):
         self.vidmoly = VidmolyExtractor()
