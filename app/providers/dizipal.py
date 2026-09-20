@@ -12,7 +12,7 @@ from app.extractors.vidmoly import VidmolyExtractor
 class DizipalProvider(BaseProvider):
     name = "Dizipal"
     is_torrent = False
-    BASE_URL = "https://dizipal.buzz"  # Active mirror
+    BASE_URL = "https://dizipalw.com"  # Active mirror
 
     def __init__(self):
         self.generic_hls = GenericHlsExtractor()
