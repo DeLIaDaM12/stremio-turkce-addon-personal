@@ -51,15 +51,20 @@ class DizipalProvider(BaseProvider):
     def _episode_url(self, url: str, meta: MediaMeta) -> str:
         if meta.media_type != "series" or not meta.season or not meta.episode:
             return url
-        suffix = f"-sezon-{meta.season}-bolum-{meta.episode}"
-        if url.rstrip("/").casefold().endswith(suffix.casefold()):
-            return url.rstrip("/") + "/"
-        return f"{url.rstrip('/')}{suffix}/"
+        suffixes = (
+            f"-{meta.season}-sezon-{meta.episode}-bolum",
+            f"-sezon-{meta.season}-bolum-{meta.episode}",
+        )
+        base = url.rstrip("/")
+        if any(base.casefold().endswith(suffix.casefold()) for suffix in suffixes):
+            return base + "/"
+        return f"{base}-{meta.season}-sezon-{meta.episode}-bolum/"
 
     def _candidate_urls(self, html: str, meta: MediaMeta) -> List[str]:
         soup = BeautifulSoup(html, "html.parser")
         selectors = (
             "article a, .search-result a, .movies-list a, .film a, .movie a, "
+            ".poster a, .card a, .item a, a[rel='bookmark'], "
             "a[href*='/film/'], a[href*='/dizi/'], a[href*='/series/']"
         )
         candidates: List[str] = []
@@ -87,20 +92,27 @@ class DizipalProvider(BaseProvider):
                 values.append(url)
 
         for node in soup.select(
-            "iframe, source, video, a[data-src], a[data-frame], "
-            "a[data-url], a[href*='/player/'], script"
+            "iframe, source, video, embed, script, a[data-src], a[data-frame], "
+            "a[data-url], a[href*='/player/'], a[href*='embed']"
         ):
             for attribute in ("src", "data-src", "data-frame", "data-url", "href"):
                 value = node.get(attribute)
                 if value:
                     add(value)
 
-        # Player URLs are often stored inside JavaScript strings.
         for value in re.findall(r"(?:https?:)?//[^\"'<>\s\\]+", html):
-            if any(marker in value.casefold() for marker in ("player", "vidmoly", "rapidrame", "m3u8", "mp4")):
+            if any(
+                marker in value.casefold()
+                for marker in ("player", "embed", "vidmoly", "rapidrame", "m3u8", "mp4")
+            ):
                 add(value)
-
         return values
+
+    @staticmethod
+    def _diagnostic(response: httpx.Response) -> str:
+        title = BeautifulSoup(response.text, "html.parser").title
+        page_title = title.get_text(" ", strip=True) if title else ""
+        return f"status={response.status_code} url={response.url} bytes={len(response.content)} title={page_title!r}"
 
     async def _extract(self, url: str, referer: str):
         lower = url.casefold()
@@ -117,67 +129,69 @@ class DizipalProvider(BaseProvider):
         seen_streams: Set[str] = set()
 
         async with httpx.AsyncClient(
-            headers=headers, timeout=8.0, follow_redirects=True, verify=False
+            headers=headers,
+            timeout=httpx.Timeout(8.0, connect=5.0),
+            follow_redirects=True,
+            verify=False,
         ) as client:
             target_url = ""
             for query in meta.search_queries:
                 try:
-                    response = await client.get(
-                        f"{self.BASE_URL}/find", params={"q": query}
-                    )
+                    response = await client.get(f"{self.BASE_URL}/find", params={"q": query})
+                    print(f"[{self.name}] search {self._diagnostic(response)} query={query!r}")
                     if response.status_code != 200:
                         continue
-
-                    for candidate in self._candidate_urls(response.text, meta)[:10]:
+                    candidates = self._candidate_urls(response.text, meta)
+                    print(f"[{self.name}] candidates={len(candidates)}")
+                    for candidate in candidates[:10]:
                         try:
                             page = await client.get(candidate)
-                            if page.status_code == 200 and self._player_urls(page.text, candidate):
+                            players = self._player_urls(page.text, candidate) if page.status_code == 200 else []
+                            print(f"[{self.name}] candidate {self._diagnostic(page)} players={len(players)}")
+                            if players:
                                 target_url = candidate
                                 break
                         except httpx.HTTPError as exc:
-                            print(f"[{self.name}] Candidate error: {exc}")
+                            print(f"[{self.name}] candidate error url={candidate}: {exc}")
                     if target_url:
                         break
                 except httpx.HTTPError as exc:
-                    print(f"[{self.name}] Search error for '{query}': {exc}")
+                    print(f"[{self.name}] search error query={query!r}: {exc}")
 
             if not target_url:
-                return []
+                print(f"[{self.name}] no playable target found")
+                return streams
 
             try:
                 page = await client.get(target_url)
                 if page.status_code != 200:
-                    return []
-
+                    print(f"[{self.name}] target rejected {self._diagnostic(page)}")
+                    return streams
+                player_urls = self._player_urls(page.text, target_url)
+                print(f"[{self.name}] target players={len(player_urls)} url={target_url}")
                 limit = max(0, config.max_streams_per_provider)
-                for player_url in self._player_urls(page.text, target_url)[:limit or None]:
+                for player_url in player_urls[:limit or None]:
                     try:
                         extracted = await self._extract(player_url, target_url)
                     except Exception as exc:
-                        print(f"[{self.name}] Extraction error for '{player_url}': {exc}")
+                        print(f"[{self.name}] extraction error url={player_url}: {type(exc).__name__}: {exc}")
                         continue
                     if not extracted or not extracted.get("url"):
+                        print(f"[{self.name}] extractor returned no media url={player_url}")
                         continue
-
                     stream_url = extracted["url"]
                     if stream_url in seen_streams:
                         continue
                     seen_streams.add(stream_url)
                     quality = extracted.get("quality") or "1080p"
-                    streams.append(
-                        Stream(
-                            name=f"[TR DUBLAJ] ⚡ {self.name}",
-                            title=f"{meta.original_title}\n🔊 Türkçe Dublaj | 🎬 {quality} | HLS Stream",
-                            url=stream_url,
-                            behaviorHints=BehaviorHints(
-                                proxyHeaders=extracted.get("headers") or {
-                                    "Referer": target_url,
-                                    "User-Agent": self.USER_AGENT,
-                                }
-                            ),
-                        )
-                    )
+                    streams.append(Stream(
+                        name=f"[TR DUBLAJ] ⚡ {self.name}",
+                        title=f"{meta.original_title}\n🔊 Türkçe Dublaj | 🎬 {quality} | HLS Stream",
+                        url=stream_url,
+                        behaviorHints=BehaviorHints(proxyHeaders=extracted.get("headers") or {"Referer": target_url, "User-Agent": self.USER_AGENT}),
+                    ))
             except httpx.HTTPError as exc:
-                print(f"[{self.name}] Stream extraction error: {exc}")
+                print(f"[{self.name}] target request error: {exc}")
 
+        print(f"[{self.name}] returning {len(streams)} stream(s)")
         return streams
