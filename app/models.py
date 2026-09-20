@@ -1,15 +1,21 @@
-from typing import List, Optional, Dict, Any, Union
+from typing import Any, Dict, List, Optional, Union
+
 from pydantic import BaseModel, Field
+
 
 class BehaviorHints(BaseModel):
     notWebReady: Optional[bool] = None
     bingeGroup: Optional[str] = None
-    proxyHeaders: Optional[Dict[str, Dict[str, str]]] = None
+    # Stremio expects a flat HTTP-header mapping here, for example:
+    # {"Referer": "https://example.com", "User-Agent": "..."}
+    proxyHeaders: Optional[Dict[str, str]] = None
+
 
 class Subtitle(BaseModel):
     id: str
     url: str
     lang: str = "tur"
+
 
 class Stream(BaseModel):
     name: str = "[TR Dublaj] HD"
@@ -20,13 +26,16 @@ class Stream(BaseModel):
     behaviorHints: Optional[BehaviorHints] = None
     subtitles: Optional[List[Subtitle]] = None
 
+
 class StreamResponse(BaseModel):
     streams: List[Stream] = Field(default_factory=list)
+
 
 class ManifestResource(BaseModel):
     name: str
     types: List[str]
     idPrefixes: Optional[List[str]] = None
+
 
 class Manifest(BaseModel):
     id: str
@@ -41,6 +50,7 @@ class Manifest(BaseModel):
     contactEmail: Optional[str] = None
     behaviorHints: Optional[Dict[str, Any]] = None
 
+
 class UserConfig(BaseModel):
     enable_direct: bool = True
     enable_torrents: bool = True
@@ -53,7 +63,7 @@ class UserConfig(BaseModel):
             "dizipal",
             "fullhdfilmizlesene",
             "diziwatch",
-            "turktorrent"
+            "turktorrent",
         ]
     )
     qualities: List[str] = Field(default_factory=lambda: ["1080p", "720p", "4k"])
