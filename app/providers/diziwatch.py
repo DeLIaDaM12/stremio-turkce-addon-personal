@@ -11,7 +11,7 @@ from app.extractors.generic_hls import GenericHlsExtractor
 class DiziWatchProvider(BaseProvider):
     name = "DiziWatch"
     is_torrent = False
-    BASE_URL = "https://diziwatch.net"
+    BASE_URL = "https://diziwatch.ac"
 
     def __init__(self):
         self.generic_hls = GenericHlsExtractor()
