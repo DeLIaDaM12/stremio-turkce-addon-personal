@@ -38,6 +38,35 @@ class FullHdFilmizleseneProvider(BaseProvider):
         return urllib.parse.urljoin(base_url.rstrip("/") + "/", value)
 
     @staticmethod
+    def _slug(value: str) -> str:
+        value = value.casefold().replace("&", " and ")
+        return re.sub(r"[^a-z0-9]+", "-", value).strip("-")
+
+    def _direct_title_urls(self, meta: MediaMeta) -> List[str]:
+        urls: List[str] = []
+        seen: Set[str] = set()
+        for title in (meta.original_title, meta.turkish_title):
+            if not title:
+                continue
+            slug = self._slug(title)
+            if not slug:
+                continue
+            base = f"{self.BASE_URL}/{slug}"
+            variants = [base]
+            if meta.media_type == "series" and meta.season and meta.episode:
+                variants = [
+                    f"{base}-{meta.season}-sezon-{meta.episode}-bolum",
+                    f"{base}-sezon-{meta.season}-bolum-{meta.episode}",
+                    base,
+                ]
+            for value in variants:
+                url = value.rstrip("/") + "/"
+                if url not in seen:
+                    seen.add(url)
+                    urls.append(url)
+        return urls
+
+    @staticmethod
     def _title_matches(text: str, meta: MediaMeta) -> bool:
         if not text:
             return True
@@ -69,9 +98,9 @@ class FullHdFilmizleseneProvider(BaseProvider):
                 if value:
                     add(value)
 
-        for value in re.findall(r"(?:https?:)?//[^\"'<>\s\\]+", html):
+        for value in re.findall(r"(?:https?:)?//[^\"'<>\s\\]+", html, re.IGNORECASE):
             lower = value.casefold()
-            if any(marker in lower for marker in ("player", "embed", "vidmoly", "rapidrame", ".m3u8", ".mp4")):
+            if any(marker in lower for marker in ("player", "embed", "vidmoly", "rapidrame", "m3u8", "mp4")):
                 add(value)
 
         for value in re.findall(
@@ -94,9 +123,6 @@ class FullHdFilmizleseneProvider(BaseProvider):
         return await self.generic_hls.extract(url, referer=referer)
 
     async def get_streams(self, meta: MediaMeta, config: UserConfig) -> List[Stream]:
-        if meta.media_type != "movie":
-            return []
-
         headers = {"User-Agent": self.USER_AGENT, "Referer": self.BASE_URL}
         streams: List[Stream] = []
         seen_streams: Set[str] = set()
@@ -108,43 +134,52 @@ class FullHdFilmizleseneProvider(BaseProvider):
             verify=False,
         ) as client:
             target_url = ""
-            for query in meta.search_queries:
+            for candidate in self._direct_title_urls(meta):
                 try:
-                    response = await client.get(
-                        f"{self.BASE_URL}/arama/{urllib.parse.quote(query)}"
-                    )
-                    print(f"[{self.name}] search {self._diagnostic(response)} query={query!r}")
-                    if response.status_code != 200:
-                        continue
-
-                    soup = BeautifulSoup(response.text, "html.parser")
-                    candidates: List[str] = []
-                    seen_candidates: Set[str] = set()
-                    for node in soup.select(
-                        ".film-list a, .film-item a, a.film-link, .movie a, "
-                        ".card a, .item a, article a, a[rel='bookmark']"
-                    ):
-                        candidate = self._normalize_url(self.BASE_URL, node.get("href", ""))
-                        if not candidate or candidate in seen_candidates:
-                            continue
-                        label = node.get("title") or node.get_text(" ", strip=True)
-                        if meta.year and not self._title_matches(label, meta):
-                            continue
-                        seen_candidates.add(candidate)
-                        candidates.append(candidate)
-
-                    print(f"[{self.name}] candidates={len(candidates)}")
-                    for candidate in candidates[:10]:
-                        page = await client.get(candidate)
-                        players = self._player_urls(page.text, candidate) if page.status_code == 200 else []
-                        print(f"[{self.name}] candidate {self._diagnostic(page)} players={len(players)}")
-                        if players:
-                            target_url = candidate
-                            break
-                    if target_url:
+                    page = await client.get(candidate)
+                    players = self._player_urls(page.text, candidate) if page.status_code == 200 else []
+                    print(f"[{self.name}] direct {self._diagnostic(page)} players={len(players)}")
+                    if players:
+                        target_url = candidate
                         break
                 except httpx.HTTPError as exc:
-                    print(f"[{self.name}] search error query={query!r}: {exc}")
+                    print(f"[{self.name}] direct error url={candidate}: {exc}")
+
+            if not target_url:
+                for query in meta.search_queries:
+                    try:
+                        search_url = f"{self.BASE_URL}/?s={urllib.parse.quote(query)}"
+                        response = await client.get(search_url)
+                        print(f"[{self.name}] fallback search {self._diagnostic(response)} query={query!r}")
+                        if response.status_code != 200:
+                            continue
+                        soup = BeautifulSoup(response.text, "html.parser")
+                        candidates: List[str] = []
+                        seen_candidates: Set[str] = set()
+                        for node in soup.select(
+                            ".film-list a, .film-item a, a.film-link, .movie a, "
+                            ".card a, .item a, article a, a[rel='bookmark']"
+                        ):
+                            candidate = self._normalize_url(self.BASE_URL, node.get("href", ""))
+                            if not candidate or candidate in seen_candidates:
+                                continue
+                            label = node.get("title") or node.get_text(" ", strip=True)
+                            if meta.year and not self._title_matches(label, meta):
+                                continue
+                            seen_candidates.add(candidate)
+                            candidates.append(candidate)
+                        print(f"[{self.name}] fallback candidates={len(candidates)}")
+                        for candidate in candidates[:10]:
+                            page = await client.get(candidate)
+                            players = self._player_urls(page.text, candidate) if page.status_code == 200 else []
+                            print(f"[{self.name}] candidate {self._diagnostic(page)} players={len(players)}")
+                            if players:
+                                target_url = candidate
+                                break
+                        if target_url:
+                            break
+                    except httpx.HTTPError as exc:
+                        print(f"[{self.name}] fallback search error query={query!r}: {exc}")
 
             if not target_url:
                 print(f"[{self.name}] no playable target found")
@@ -155,7 +190,6 @@ class FullHdFilmizleseneProvider(BaseProvider):
                 if page.status_code != 200:
                     print(f"[{self.name}] target rejected {self._diagnostic(page)}")
                     return streams
-
                 player_urls = self._player_urls(page.text, target_url)
                 print(f"[{self.name}] target players={len(player_urls)} url={target_url}")
                 limit = max(0, config.max_streams_per_provider)
@@ -168,25 +202,22 @@ class FullHdFilmizleseneProvider(BaseProvider):
                     if not extracted or not extracted.get("url"):
                         print(f"[{self.name}] extractor returned no media url={player_url}")
                         continue
-
                     stream_url = extracted["url"]
                     if stream_url in seen_streams:
                         continue
                     seen_streams.add(stream_url)
                     quality = extracted.get("quality") or "1080p"
-                    streams.append(
-                        Stream(
-                            name=f"[TR DUBLAJ] ⚡ {self.name}",
-                            title=f"{meta.original_title}\n🔊 Türkçe Dublaj | 🎬 {quality} | HLS Stream",
-                            url=stream_url,
-                            behaviorHints=BehaviorHints(
-                                proxyHeaders=extracted.get("headers") or {
-                                    "Referer": target_url,
-                                    "User-Agent": self.USER_AGENT,
-                                }
-                            ),
-                        )
-                    )
+                    streams.append(Stream(
+                        name=f"[TR DUBLAJ] ⚡ {self.name}",
+                        title=f"{meta.original_title}\n🔊 Türkçe Dublaj | 🎬 {quality} | HLS Stream",
+                        url=stream_url,
+                        behaviorHints=BehaviorHints(
+                            proxyHeaders=extracted.get("headers") or {
+                                "Referer": target_url,
+                                "User-Agent": self.USER_AGENT,
+                            }
+                        ),
+                    ))
             except httpx.HTTPError as exc:
                 print(f"[{self.name}] target request error: {exc}")
 
