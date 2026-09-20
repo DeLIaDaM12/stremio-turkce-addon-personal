@@ -1,44 +1,83 @@
+import html
 import re
+from typing import Any, Dict, Optional
+
 import httpx
-from typing import Optional, Dict, Any
+
 from app.extractors.base import BaseExtractor
+
 
 class VidmolyExtractor(BaseExtractor):
     name = "VidMoly"
+    USER_AGENT = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    )
+    URL_PATTERN = re.compile(
+        r"(?:https?:)?//[^\"'<>\s\\]+?\.(?:m3u8|mp4)(?:\?[^\"'<>\s\\]*)?",
+        re.IGNORECASE,
+    )
 
-    async def extract(self, embed_url: str, referer: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    @classmethod
+    def _find_media_url(cls, content: str) -> Optional[str]:
+        content = html.unescape(content).replace("\\/", "/")
+        patterns = (
+            r"(?:file|src|source|hls|playlist|url)\s*:\s*[\"']([^\"']+)",
+            r"(?:file|src|source|hls|playlist|url)\s*=\s*[\"']([^\"']+)",
+        )
+        for pattern in patterns:
+            match = re.search(pattern, content, re.IGNORECASE)
+            if match and (".m3u8" in match.group(1).lower() or ".mp4" in match.group(1).lower()):
+                return match.group(1)
+
+        match = cls.URL_PATTERN.search(content)
+        return match.group(0) if match else None
+
+    async def extract(
+        self,
+        embed_url: str,
+        referer: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            "Referer": referer or "https://vidmoly.to/"
+            "User-Agent": self.USER_AGENT,
+            "Referer": referer or "https://vidmoly.to/",
         }
-        
-        async with httpx.AsyncClient(headers=headers, timeout=8.0, follow_redirects=True) as client:
-            try:
-                resp = await client.get(embed_url)
-                html = resp.text
-                
-                # Check for packed javascript
-                if "eval(function(p,a,c,k,e,d)" in html:
-                    html = self.unpack_packer(html)
-                
-                # Search for m3u8 source
-                m = re.search(r'file:\s*["\'](https?://[^"\']+\.m3u8[^"\']*)["\']', html)
-                if not m:
-                    m = re.search(r'sources:\s*\[\{\s*file:\s*["\'](https?://[^"\']+)["\']', html)
-                if not m:
-                    m = re.search(r'["\'](https?://[^"\']+\.m3u8[^"\']*)["\']', html)
 
-                if m:
-                    stream_url = m.group(1)
-                    return {
-                        "url": stream_url,
-                        "quality": "1080p",
-                        "format": "hls",
-                        "headers": {
-                            "Referer": "https://vidmoly.to/",
-                            "User-Agent": headers["User-Agent"]
-                        }
-                    }
-            except Exception as e:
-                print(f"[VidmolyExtractor] Error: {e}")
+        try:
+            async with httpx.AsyncClient(
+                headers=headers,
+                timeout=httpx.Timeout(10.0, connect=5.0),
+                follow_redirects=True,
+                verify=True,
+            ) as client:
+                response = await client.get(embed_url)
+                if response.status_code >= 400:
+                    return None
+
+                content = response.text
+                if "eval(function(p,a,c,k,e,d)" in content:
+                    content = self.unpack_packer(content)
+
+                stream_url = self._find_media_url(content)
+                if not stream_url:
+                    return None
+
+                if stream_url.startswith("//"):
+                    stream_url = "https:" + stream_url
+                elif stream_url.startswith("/"):
+                    stream_url = str(response.url).rstrip("/") + stream_url
+
+                return {
+                    "url": stream_url,
+                    "quality": "1080p",
+                    "format": "hls" if ".m3u8" in stream_url.lower() else "mp4",
+                    "headers": {
+                        "Referer": str(response.url),
+                        "User-Agent": self.USER_AGENT,
+                    },
+                }
+        except (httpx.HTTPError, ValueError) as exc:
+            print(f"[{self.name}] Error extracting {embed_url}: {exc}")
+
         return None
