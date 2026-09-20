@@ -1,12 +1,13 @@
 import asyncio
 from typing import List
+
 from app.models import Stream, UserConfig
-from app.services.metadata import MediaMeta
 from app.services.cache import CacheService, streams_cache
-from app.providers.hdfilmcehennemi import HdFilmCehennemiProvider
+from app.services.metadata import MediaMeta
 from app.providers.dizipal import DizipalProvider
-from app.providers.fullhdfilmizlesene import FullHdFilmizleseneProvider
 from app.providers.diziwatch import DiziWatchProvider
+from app.providers.fullhdfilmizlesene import FullHdFilmizleseneProvider
+from app.providers.hdfilmcehennemi import HdFilmCehennemiProvider
 from app.providers.turktorrent import TurkTorrentProvider
 
 ALL_PROVIDERS = {
@@ -17,58 +18,72 @@ ALL_PROVIDERS = {
     "turktorrent": TurkTorrentProvider(),
 }
 
+PROVIDER_TIMEOUT = 20.0
+
+
+async def _fetch_provider(name: str, provider, meta: MediaMeta, config: UserConfig) -> List[Stream]:
+    try:
+        streams = await asyncio.wait_for(provider.get_streams(meta, config), timeout=PROVIDER_TIMEOUT)
+        print(f"[ProviderAggregator] {name}: {len(streams)} stream(s)")
+        return streams if isinstance(streams, list) else []
+    except asyncio.TimeoutError:
+        print(f"[ProviderAggregator] {name} timed out")
+    except Exception as exc:
+        print(f"[ProviderAggregator] {name} failed: {exc}")
+    return []
+
+
+def _stream_score(stream: Stream) -> int:
+    text = f"{stream.name} {stream.title}".casefold()
+    score = 0
+    if "dublaj" in text or "dual" in text:
+        score += 100
+    if "⚡" in stream.name or stream.url:
+        score += 50
+    if "2160p" in text or "4k" in text:
+        score += 20
+    elif "1080p" in text:
+        score += 15
+    elif "720p" in text:
+        score += 5
+    return score
+
+
 async def fetch_all_streams(meta: MediaMeta, config: UserConfig) -> List[Stream]:
-    """Fetches streams from all enabled providers concurrently."""
-    cache_key = CacheService.generate_key("streams", meta.imdb_id, meta.season or 0, meta.episode or 0)
+    cache_key = CacheService.generate_key(
+        "streams", meta.imdb_id, meta.season or 0, meta.episode or 0
+    )
     cached = CacheService.get(streams_cache, cache_key)
     if cached:
         return cached
 
     tasks = []
-    for prov_name, provider in ALL_PROVIDERS.items():
-        if prov_name in config.enabled_providers:
-            if provider.is_torrent and not config.enable_torrents:
-                continue
-            if not provider.is_torrent and not config.enable_direct:
-                continue
-            tasks.append(provider.get_streams(meta, config))
+    for name, provider in ALL_PROVIDERS.items():
+        if name not in config.enabled_providers:
+            continue
+        if provider.is_torrent and not config.enable_torrents:
+            continue
+        if not provider.is_torrent and not config.enable_direct:
+            continue
+        tasks.append(_fetch_provider(name, provider, meta, config))
 
-    # Execute all scrapers in parallel with timeout
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    results = await asyncio.gather(*tasks)
     all_streams: List[Stream] = []
+    seen_urls = set()
+    seen_hashes = set()
 
-    for res in results:
-        if isinstance(res, list):
-            all_streams.extend(res)
-        elif isinstance(res, Exception):
-            print(f"[ProviderAggregator] Exception occurred: {res}")
+    for result in results:
+        for stream in result:
+            key = getattr(stream, "infoHash", None) or getattr(stream, "url", None)
+            if not key or key in seen_urls or key in seen_hashes:
+                continue
+            if getattr(stream, "infoHash", None):
+                seen_hashes.add(key)
+            else:
+                seen_urls.add(key)
+            all_streams.append(stream)
 
-    # Prioritize streams: Dubbed Direct Streams first, then Torrent Dual, then Subbed
-    def stream_sort_key(s: Stream):
-        score = 0
-        name_lower = s.name.lower()
-        title_lower = s.title.lower()
-        
-        # Dubbed gets highest priority
-        if "dublaj" in name_lower or "dublaj" in title_lower or "dual" in title_lower:
-            score += 100
-        # Direct streams are faster for TV
-        if "⚡" in s.name or s.url:
-            score += 50
-        # 1080p / 4K quality priority
-        if "4k" in name_lower or "2160p" in title_lower:
-            score += 20
-        elif "1080p" in name_lower or "1080p" in title_lower:
-            score += 15
-        elif "720p" in name_lower:
-            score += 5
-
-        return -score
-
-    all_streams.sort(key=stream_sort_key)
-
-    # Cache successful results
+    all_streams.sort(key=_stream_score, reverse=True)
     if all_streams:
         CacheService.set(streams_cache, cache_key, all_streams)
-
     return all_streams
