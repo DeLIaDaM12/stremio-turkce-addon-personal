@@ -5,144 +5,80 @@ from typing import List, Set
 import httpx
 from bs4 import BeautifulSoup
 
-from app.models import Stream, UserConfig, BehaviorHints
-from app.services.metadata import MediaMeta
+from app.models import BehaviorHints, Stream, UserConfig
 from app.providers.base import BaseProvider
+from app.services.metadata import MediaMeta
 from app.extractors.generic_hls import GenericHlsExtractor
 
 
 class DiziWatchProvider(BaseProvider):
     name = "DiziWatch"
     is_torrent = False
-    BASE_URL = "https://diziwatch.ac"
+    BASE_URL = "https://diziwatch.net"
 
     def __init__(self):
         self.generic_hls = GenericHlsExtractor()
 
     @staticmethod
-    def _normalize_url(base_url: str, href: str) -> str:
-        if not href:
-            return ""
-
-        href = href.strip()
-        if href.startswith(("http://", "https://")):
-            return href
-        if href.startswith("//"):
-            return "https:" + href
-        return urllib.parse.urljoin(base_url.rstrip("/") + "/", href)
+    def _url(base: str, value: str) -> str:
+        return urllib.parse.urljoin(base.rstrip("/") + "/", value.strip()) if value else ""
 
     @staticmethod
-    def _title_matches(title_text: str, meta: MediaMeta) -> bool:
-        if not title_text:
-            return True
-
-        title = title_text.lower()
-        for value in (meta.original_title, meta.turkish_title):
-            if value and value.lower() in title:
-                return True
-
-        if meta.year:
-            accepted_years = {meta.year - 1, meta.year, meta.year + 1}
-            if any(str(year) in title for year in accepted_years):
-                return True
-
-        return False
-
-    @staticmethod
-    def _series_episode_url(base_url: str, meta: MediaMeta) -> str:
-        if meta.media_type != "series" or not meta.season or not meta.episode:
-            return base_url
-        return f"{base_url.rstrip('/')}-{meta.season}-sezon-{meta.episode}-bolum-izle/"
+    def _hls(html: str, base: str) -> List[str]:
+        values = re.findall(r"(?:https?:)?//[^\"'<>\\s]+\.m3u8(?:\?[^\"'<>\\s]*)?", html, re.I)
+        values += re.findall(r"(?:src|file|source|url)\s*[:=]\s*[\"']([^\"']+)", html, re.I)
+        result, seen = [], set()
+        for value in values:
+            value = value.replace("\\/", "/")
+            if value.startswith("//"):
+                value = "https:" + value
+            value = DiziWatchProvider._url(base, value)
+            if ".m3u8" in value.lower() and value not in seen:
+                seen.add(value)
+                result.append(value)
+        return result
 
     async def get_streams(self, meta: MediaMeta, config: UserConfig) -> List[Stream]:
         if meta.media_type != "series" or not meta.season or not meta.episode:
             return []
-
-        streams: List[Stream] = []
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            "Referer": self.BASE_URL,
-        }
-
+        headers = {"User-Agent": "Mozilla/5.0", "Referer": self.BASE_URL}
         async with httpx.AsyncClient(headers=headers, timeout=8.0, follow_redirects=True, verify=False) as client:
-            target_url = None
-
+            target = ""
             for query in meta.search_queries:
                 try:
-                    search_url = f"{self.BASE_URL}/?s={urllib.parse.quote(query)}"
-                    response = await client.get(search_url)
+                    response = await client.get(f"{self.BASE_URL}/", params={"s": query})
                     if response.status_code != 200:
                         continue
-
                     soup = BeautifulSoup(response.text, "html.parser")
-                    seen: Set[str] = set()
-
-                    for item in soup.select(".post-content a, .entry-title a, article a, .title a"):
-                        href = item.get("href")
+                    for link in soup.select(".post-content a, .entry-title a, article a, .title a"):
+                        href = link.get("href")
                         if not href:
                             continue
-
-                        full_url = self._normalize_url(self.BASE_URL, href)
-                        if not full_url or full_url in seen:
-                            continue
-                        seen.add(full_url)
-
-                        title_text = item.get("title") or item.get_text(" ", strip=True) or ""
-                        if meta.year and not self._title_matches(title_text, meta):
-                            continue
-
-                        target_url = self._series_episode_url(full_url, meta)
+                        base = self._url(self.BASE_URL, href).rstrip("/")
+                        candidate = f"{base}-{meta.season}-sezon-{meta.episode}-bolum-izle/"
+                        page = await client.get(candidate)
+                        if page.status_code == 200 and self._hls(page.text, candidate):
+                            target = candidate
+                            break
+                    if target:
                         break
-
-                    if target_url:
-                        break
-                except Exception as exc:
+                except (httpx.HTTPError, ValueError) as exc:
                     print(f"[{self.name}] Search error: {exc}")
-
-            if not target_url:
-                return streams
-
-            try:
-                page_response = await client.get(target_url)
-                if page_response.status_code != 200:
-                    return streams
-
-                page_html = page_response.text
-                page_soup = BeautifulSoup(page_html, "html.parser")
-
-                stream_urls: Set[str] = set()
-
-                # catch direct HLS URLs in any tag
-                for match in re.findall(r'"?(https?://[^"\'\s>]+\.m3u8(?:\?[^"\'\s>]*)?)"?', page_html, flags=re.IGNORECASE):
-                    stream_urls.add(match)
-
-                for tag in page_soup.select("iframe, source, script, a[href*='.m3u8'], a[href*='playlist']"):
-                    raw = tag.get("src") or tag.get("data-src") or tag.get("href")
-                    if not raw:
-                        continue
-                    if ".m3u8" in raw.lower():
-                        stream_urls.add(self._normalize_url(target_url, raw))
-
-                for stream_url in sorted(stream_urls):
-                    extracted = await self.generic_hls.extract(stream_url, referer=target_url)
-                    if not extracted or not extracted.get("url"):
-                        continue
-
-                    quality = extracted.get("quality") or "1080p"
-                    streams.append(
-                        Stream(
-                            name=f"[TR DUBLAJ/ALT] ⚡ {self.name}",
-                            title=f"{meta.original_title} S{meta.season:02d}E{meta.episode:02d}\n🔊 Türkçe Ses / Altyazı | 🎬 {quality}",
-                            url=extracted["url"],
-                            behaviorHints=BehaviorHints(
-                                proxyHeaders=extracted.get("headers") or {
-                                    "Referer": target_url,
-                                    "User-Agent": headers["User-Agent"],
-                                }
-                            ),
-                        )
-                    )
-            except Exception as exc:
-                print(f"[{self.name}] Stream error: {exc}")
-
-        return streams
+            if not target:
+                return []
+            page = await client.get(target)
+            urls = self._hls(page.text, target)[: max(0, config.max_streams_per_provider) or None]
+            streams = []
+            seen: Set[str] = set()
+            for url in urls:
+                extracted = await self.generic_hls.extract(url, referer=target)
+                if not extracted or not extracted.get("url") or extracted["url"] in seen:
+                    continue
+                seen.add(extracted["url"])
+                streams.append(Stream(
+                    name=f"[TR DUBLAJ/ALT] ⚡ {self.name}",
+                    title=f"{meta.original_title} S{meta.season:02d}E{meta.episode:02d} | 🎬 {extracted.get('quality', '1080p')}",
+                    url=extracted["url"],
+                    behaviorHints=BehaviorHints(proxyHeaders=extracted.get("headers") or headers),
+                ))
+            return streams
