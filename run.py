@@ -1,34 +1,38 @@
-import uvicorn
 import os
-import sys
 import socket
+import sys
 
-# Force UTF-8 stdout on Windows
+import uvicorn
+
+# Force UTF-8 stdout on Windows.
 if sys.platform == "win32":
     try:
-        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stdout.reconfigure(encoding="utf-8")
     except Exception:
         pass
 
-# Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from app.config import settings
 
-def get_local_ip():
+
+BUILD_MARKER = "provider-debug-2026-09-20"
+
+
+def get_local_ip() -> str:
     try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
-        return ip
-    except Exception:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect(("8.8.8.8", 80))
+            return sock.getsockname()[0]
+    except OSError:
         return "127.0.0.1"
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", settings.PORT))
     local_ip = get_local_ip()
 
+    print(f"[BUILD] {BUILD_MARKER}", flush=True)
     print("==================================================")
     print("[+] Stremio Turkce Dublaj & Altyazi Eklentisi")
     print("==================================================")
