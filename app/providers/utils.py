@@ -1,11 +1,3 @@
- (cd "$(git rev-parse --show-toplevel)" && printf '%s' 'diff --git a/app/providers/utils.py b/app/providers/utils.py
-new file mode 100644
-index 0000000000000000000000000000000000000000..b47b838d78ac9b048fb35146f7498dc18b189639
---- /dev/null
-+++ b/app/providers/utils.py
-@@ -0,0 +1,75 @@
-+"""Shared safeguards for pages returned by streaming-provider web sites."""
-+
 +import re
 +import unicodedata
 +from typing import Optional
@@ -79,4 +71,3 @@ index 0000000000000000000000000000000000000000..b47b838d78ac9b048fb35146f7498dc1
 +            score += 25
 +        best = max(best or score, score)
 +    return best
-' | git apply --3way)
