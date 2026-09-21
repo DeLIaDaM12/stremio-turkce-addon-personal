@@ -1,8 +1,3 @@
- (cd "$(git rev-parse --show-toplevel)" && printf '%s' 'diff --git a/app/providers/hdfilmcehennemi.py b/app/providers/hdfilmcehennemi.py
-index 1c6980a22e4105f90eb69c63d932389380208279..049ee7f0e332d07864a85d32dfce6d470d725068 100644
---- a/app/providers/hdfilmcehennemi.py
-+++ b/app/providers/hdfilmcehennemi.py
-@@ -1,37 +1,38 @@
  import re
  import urllib.parse
  from typing import List, Set, Tuple
@@ -232,4 +227,3 @@ index 1c6980a22e4105f90eb69c63d932389380208279..049ee7f0e332d07864a85d32dfce6d47
                          title=f"{meta.original_title}\n🔊 {audio_type} | 🎬 {quality} | HLS Stream",
                          url=stream_url,
                          behaviorHints=BehaviorHints(proxyHeaders=extracted.get("headers") or {"Referer": target_url, "User-Agent": self.USER_AGENT}),
-' | git apply --3way)
