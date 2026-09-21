@@ -1,9 +1,3 @@
- (cd "$(git rev-parse --show-toplevel)" && printf '%s' 'diff --git a/tests/test_provider_utils.py b/tests/test_provider_utils.py
-new file mode 100644
-index 0000000000000000000000000000000000000000..43183d27b304c997ff191c76e5c89f0b381c4b4f
---- /dev/null
-+++ b/tests/test_provider_utils.py
-@@ -0,0 +1,26 @@
 +import unittest
 +
 +import httpx
@@ -30,4 +24,3 @@ index 0000000000000000000000000000000000000000..43183d27b304c997ff191c76e5c89f0b
 +    def test_movie_selection_rejects_same_year_with_a_different_title(self):
 +        self.assertIsNone(movie_match_score("Everything Everywhere All at Once (2022)", self.meta))
 +        self.assertGreater(movie_match_score("The Batman (2022) izle", self.meta) or 0, 0)
-' | git apply --3way)
