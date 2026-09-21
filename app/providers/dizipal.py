@@ -1,8 +1,3 @@
- (cd "$(git rev-parse --show-toplevel)" && printf '%s' 'diff --git a/app/providers/dizipal.py b/app/providers/dizipal.py
-index 3ec1aa47bb8ace72756c7def2769161fb66bc9d8..13b1eb5949119645efc0c148fb83a39e650959c3 100644
---- a/app/providers/dizipal.py
-+++ b/app/providers/dizipal.py
-@@ -1,36 +1,37 @@
  import re
  import urllib.parse
  from typing import List, Set
